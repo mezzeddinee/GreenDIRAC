@@ -1,6 +1,5 @@
 import pprint
 import time
-
 import requests
 from DIRAC import S_OK, S_ERROR, gConfig
 from DIRAC.Core.Base.AgentModule import AgentModule
@@ -73,8 +72,8 @@ class GreenReportingAgent(AgentModule):
 
         self.maxJobsAtOnce = 50
         self.section = PathFinder.getAgentSection(self.agentName)
-        self.email = "CIM_EMAIL"
-        self.password = "CIM_PASSWORD"
+        self.email = "atsareg@in2p3.fr"
+        self.password = "Green@31415"
         self.token_max_age_hours = 24
         self.metrics_db_url = "https://mc-a4.lab.uvalight.net/gd-cim-api/submit"
         self.cim_api_base = "https://mc-a4.lab.uvalight.net/gd-cim-api"
@@ -102,10 +101,10 @@ class GreenReportingAgent(AgentModule):
         self.maxJobsAtOnce = self.am_getOption("MaxJobsAtOnce", self.maxJobsAtOnce)
 
         self.email = self.am_getOption("CIM_EMAIL", self.email)
-        self.password = self.am_getOption("CIM_PASSWORD", self.email)
+        self.password = self.am_getOption("CIM_PASSWORD", self.password)
         self.token_max_age_hours = self.am_getOption("token_max_age_hours", self.token_max_age_hours)
         self.metrics_db_url = self.am_getOption("metrics_db_url", self.metrics_db_url)
-        self.metrics_db_url = self.am_getOption("cim_api_base", self.base)
+        self.cim_api_base = self.am_getOption("cim_api_base", self.cim_api_base)
 
         self.cpuDict = {}
         result = gConfig.getSections(f"{self.section}/CPUData")
@@ -215,8 +214,8 @@ class GreenReportingAgent(AgentModule):
             except ValueError:
                 pass  # Timestamp corrupted or missing → refresh
 
-
-        r = requests.post(self.cim_api_base, json={"email": self.email, "password": self.password}, timeout=10)
+        url = f"{self.cim_api_base.rstrip('/')}/get-token"
+        r = requests.post(url , json={"email": self.email, "password": self.password}, timeout=10)
         r.raise_for_status()
         self.token = r.json()["access_token"]
         self.token_ts = str(time.time())
