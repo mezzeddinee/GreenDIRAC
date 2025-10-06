@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="GreenDIRAC",                   # Package name on PyPI
-    version="0.1.0",
-    author="Your Name",
+    name="greendirac",                   # Package name on PyPI
+    version="0.0.1",
+    author="CPPM/CNRS",
     author_email="atsareg@in2p3.fr",
     description="GreenDIGIT extension to DIRAC",
     long_description=open("README.md").read(),
