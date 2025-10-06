@@ -1,4 +1,6 @@
 import pprint
+import time
+
 import requests
 from DIRAC import S_OK, S_ERROR, gConfig
 from DIRAC.Core.Base.AgentModule import AgentModule
@@ -55,8 +57,6 @@ DEFAULT_TDP = 150
 
 # Getting tokens at
 
-METRICS_DB_URL = "https://mc-a4.lab.uvalight.net/gd-cim-api/submit"
-METRICS_DB_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdHNhcmVnQGluMnAzLmZyIiwiaXNzIjoiZ3JlZW5kaWdpdC1sb2dpbi11dmEiLCJpYXQiOjE3NTkzMDA5ODYsIm5iZiI6MTc1OTMwMDk4NiwiZXhwIjoxNzU5Mzg3Mzg2fQ.A4nygJEdhvOQjkLe-ckRDidqVbi6-s4kZXLRUZkwek8"
 
 
 class GreenReportingAgent(AgentModule):
@@ -73,6 +73,13 @@ class GreenReportingAgent(AgentModule):
 
         self.maxJobsAtOnce = 50
         self.section = PathFinder.getAgentSection(self.agentName)
+        self.email = "CIM_EMAIL"
+        self.password = "CIM_PASSWORD"
+        self.token_max_age_hours = 24
+        self.metrics_db_url = "https://mc-a4.lab.uvalight.net/gd-cim-api/submit"
+        self.cim_api_base = "https://mc-a4.lab.uvalight.net/gd-cim-api"
+        self.token = None
+        self.token_ts = None
 
     #############################################################################
     def initialize(self):
@@ -93,6 +100,12 @@ class GreenReportingAgent(AgentModule):
                 return S_ERROR(f"Can't connect to ES DB: {excp}")
 
         self.maxJobsAtOnce = self.am_getOption("MaxJobsAtOnce", self.maxJobsAtOnce)
+
+        self.email = self.am_getOption("CIM_EMAIL", self.email)
+        self.password = self.am_getOption("CIM_PASSWORD", self.email)
+        self.token_max_age_hours = self.am_getOption("token_max_age_hours", self.token_max_age_hours)
+        self.metrics_db_url = self.am_getOption("metrics_db_url", self.metrics_db_url)
+        self.metrics_db_url = self.am_getOption("cim_api_base", self.base)
 
         self.cpuDict = {}
         result = gConfig.getSections(f"{self.section}/CPUData")
@@ -192,13 +205,31 @@ class GreenReportingAgent(AgentModule):
 
         return S_OK()
 
+    def get_jwt_token(self):
+        if self.token and self.token_ts:
+            try:
+                ts = float(self.token_ts)
+                age_hours = (time.time() - ts) / 3600
+                if age_hours < self.token_max_age_hours:
+                    return self.token
+            except ValueError:
+                pass  # Timestamp corrupted or missing → refresh
+
+
+        r = requests.post(self.cim_api_base, json={"email": self.email, "password": self.password}, timeout=10)
+        r.raise_for_status()
+        self.token = r.json()["access_token"]
+        self.token_ts = str(time.time())
+
+        return self.token
+
     def __sendRecordToMB(self, record):
 
-        headers = { "Authorization": f"Bearer {METRICS_DB_TOKEN}",
+        metrics_db_token = self.get_jwt_token()
+        headers = { "Authorization": f"Bearer {metrics_db_token}",
                     "Content-Type": "application/json"
                   }
-
-        response = requests.post(METRICS_DB_URL,
+        response = requests.post(self.metrics_db_url,
                                  headers = headers,
                                  json = record
                                 )
