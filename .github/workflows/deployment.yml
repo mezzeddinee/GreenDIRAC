@@ -1,0 +1,35 @@
+name: Publish Python Package to PyPI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override the release version number (e.g. 8.0.0a5)"
+
+jobs:
+  deploy-pypi:
+    name: PyPI deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'  # Choose the Python version you need
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build setuptools wheel twine
+      - name: Build package
+        run: |
+          python -m build
+      - name: Check distribution files
+        run: twine check dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@master
+        with:
+          user: __token__  # Use API token
+          password: ${{ secrets.PYPI_API_TOKEN }}
