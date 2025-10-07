@@ -72,8 +72,9 @@ class GreenReportingAgent(AgentModule):
 
         self.maxJobsAtOnce = 50
         self.section = PathFinder.getAgentSection(self.agentName)
-        self.email = "atsareg@in2p3.fr"
+        self.login = "atsareg@in2p3.fr"
         self.password = "Green@31415"
+        # how long in hours shall we wait before refreshing the token
         self.token_max_age_hours = 24
         self.metrics_db_url = "https://mc-a4.lab.uvalight.net/gd-cim-api/submit"
         self.cim_api_base = "https://mc-a4.lab.uvalight.net/gd-cim-api"
@@ -100,8 +101,9 @@ class GreenReportingAgent(AgentModule):
 
         self.maxJobsAtOnce = self.am_getOption("MaxJobsAtOnce", self.maxJobsAtOnce)
 
-        self.email = self.am_getOption("CIM_EMAIL", self.email)
+        self.login = self.am_getOption("CIM_EMAIL", self.login)
         self.password = self.am_getOption("CIM_PASSWORD", self.password)
+        # simulate other paramters can be read from dirac conf, otherwise fallback to what is init in the code
         self.token_max_age_hours = self.am_getOption("token_max_age_hours", self.token_max_age_hours)
         self.metrics_db_url = self.am_getOption("metrics_db_url", self.metrics_db_url)
         self.cim_api_base = self.am_getOption("cim_api_base", self.cim_api_base)
@@ -146,12 +148,6 @@ class GreenReportingAgent(AgentModule):
             self.log.info("No attributes found")
             return S_ERROR("No attributes found")
         jobAttrDict = result["Value"]
-
-
-        #pprint.pprint(jo)
-        #pprint.pprint(jobAttrDict)
-        print("hello world")
-        # Form records
         records = []
         for job in jobParamsDict:
             jobDict = {}
@@ -204,27 +200,27 @@ class GreenReportingAgent(AgentModule):
 
         return S_OK()
 
-    def get_jwt_token(self):
+    def __get_jwt_token(self):
         if self.token and self.token_ts:
             try:
                 ts = float(self.token_ts)
                 age_hours = (time.time() - ts) / 3600
+                # token still fresh
                 if age_hours < self.token_max_age_hours:
                     return self.token
             except ValueError:
                 pass  # Timestamp corrupted or missing → refresh
-
+        ## refreshing the token (handles first run as well)
         url = f"{self.cim_api_base.rstrip('/')}/get-token"
-        r = requests.post(url , json={"email": self.email, "password": self.password}, timeout=10)
+        r = requests.post(url, json={"email": self.login, "password": self.password}, timeout=10)
         r.raise_for_status()
         self.token = r.json()["access_token"]
         self.token_ts = str(time.time())
-
         return self.token
 
     def __sendRecordToMB(self, record):
 
-        metrics_db_token = self.get_jwt_token()
+        metrics_db_token = self.__get_jwt_token()
         headers = { "Authorization": f"Bearer {metrics_db_token}",
                     "Content-Type": "application/json"
                   }
