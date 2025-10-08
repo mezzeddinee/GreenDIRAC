@@ -54,7 +54,7 @@ DEFAULT_CI = 24
 DEFAULT_PUE = 1.5
 DEFAULT_TDP = 150
 
-# Getting tokens at
+
 
 
 
@@ -103,7 +103,7 @@ class GreenReportingAgent(AgentModule):
 
         self.login = self.am_getOption("CIM_EMAIL", self.login)
         self.password = self.am_getOption("CIM_PASSWORD", self.password)
-        # simulate other paramters can be read from dirac conf, otherwise fallback to what is init in the code
+        # simulate other parameters can be read from dirac conf, otherwise fallback to what is init in the code
         self.token_max_age_hours = self.am_getOption("token_max_age_hours", self.token_max_age_hours)
         self.metrics_db_url = self.am_getOption("metrics_db_url", self.metrics_db_url)
         self.cim_api_base = self.am_getOption("cim_api_base", self.cim_api_base)
@@ -178,6 +178,7 @@ class GreenReportingAgent(AgentModule):
                 self.log.error("Failed to get processor parameters")
                 continue
             tdp, n_cores = result["Value"]
+            ### unused var remove
             site = record.get("Site", "Unknown")
             result = self.__getSiteParameters(record["Site"])
             if not result["OK"]:
@@ -235,7 +236,8 @@ class GreenReportingAgent(AgentModule):
 
     def __getSiteParameters(self, site):
         """ To be implemented """
-
+        ##### we shall get them from the CIM AP, no?
+        ##### what shall we do with them thereafter?
         grid = site.split(".")[0]
         gocdb_name = gConfig.getValue(f"/Resources/Sites/{grid}/{site}/Name", site)
         pue = gConfig.getValue(f"/Resources/Sites/{grid}/{site}/GreenParams/PUE", DEFAULT_PUE)
