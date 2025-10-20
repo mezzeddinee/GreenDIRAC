@@ -8,6 +8,7 @@ on:
       version:
         required: true
         description: "Override the release version number (e.g. 8.0.0a5)"
+        default: 0.0.0a1
 
 jobs:
   deploy-pypi:
@@ -29,7 +30,7 @@ jobs:
           python -m readme_renderer README.md -o /tmp/README.html    
       - name: Build package
         run: |
-          sed -i 's/RELEASE_VERSION/${{ github.event.inputs.version }}/ setup.cfg
+          sed -i 's/RELEASE_VERSION/${{ github.event.inputs.version }}/' setup.cfg
           python -m build
       - name: Check distribution files
         run: twine check dist/*
