@@ -12,7 +12,6 @@ jobs:
   deploy-pypi:
     name: PyPI deployment
     runs-on: ubuntu-latest
-    if: github.event_name != 'push' || github.repository == 'GreenDIGIT-project/GreenDIRAC'
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -30,6 +29,7 @@ jobs:
       - name: Check distribution files
         run: twine check dist/*
       - name: Publish to PyPI
+        if: github.event_name = 'workflow_dispatch'
         uses: pypa/gh-action-pypi-publish@master
         with:
           user: __token__  # Use API token
