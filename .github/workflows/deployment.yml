@@ -3,6 +3,10 @@ name: Publish Python Package to PyPI
 on:
   push:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
   workflow_dispatch:
     inputs:
       version:
