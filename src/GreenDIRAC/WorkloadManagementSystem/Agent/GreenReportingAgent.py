@@ -179,6 +179,8 @@ class GreenReportingAgent(AgentModule):
                 continue
             tdp, n_cores = result["Value"]
             ### unused var remove
+
+            #TODO maybe remove
             site = record.get("Site", "Unknown")
             result = self.__getSiteParameters(record["Site"])
             if not result["OK"]:
