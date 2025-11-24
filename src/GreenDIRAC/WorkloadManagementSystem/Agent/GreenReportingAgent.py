@@ -70,6 +70,7 @@ class GreenReportingAgent(AgentModule):
         self.token = None
         self.token_ts = None
         self.token_max_age_hours = 24
+        self.ci_api_base = None
 
     # -----------------------------------------------------
     def initialize(self):
@@ -98,6 +99,7 @@ class GreenReportingAgent(AgentModule):
         self.password = self.am_getOption("CIM_PASSWORD")
         self.cim_api_base = self.am_getOption("CIM_API_BASE")
         self.metrics_db_url = self.am_getOption("CIM_METRICS_URL")
+        self.ci_api_base = self.am_getOption("CI_API_BASE")
 
         if not self.login or not self.password:
             return S_ERROR("CIM_EMAIL and CIM_PASSWORD must be set in configuration")
@@ -298,7 +300,7 @@ class GreenReportingAgent(AgentModule):
             }
 
             # ---- PUE request ----
-            pue_url = f"{self.cim_api_base.rstrip('/')}/pue"
+            pue_url = f"{self.ci_api_base.rstrip('/')}/pue"
             pue_resp = requests.post(
                 pue_url, headers=headers, json={"site_name": gocdb_name}, timeout=10
             )
@@ -316,7 +318,7 @@ class GreenReportingAgent(AgentModule):
                 self.log.warn(f"No coordinates for {gocdb_name}")
                 return self.__getFallbackSiteParams(site, gocdb_name, pue=pue)
 
-            # ---- CI request (only offset_h = 5) ----
+            # ---- CI request ----
             offset_h = 5
             t = (datetime.now(timezone.utc) - timedelta(hours=offset_h))
             t = t.isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -331,7 +333,7 @@ class GreenReportingAgent(AgentModule):
                 "wattnet_params": {"granularity": "hour"},
             }
 
-            ci_url = f"{self.cim_api_base.rstrip('/')}/ci"
+            ci_url = f"{self.ci_api_base.rstrip('/')}/ci"
             ci_resp = requests.post(ci_url, headers=headers, json=ci_payload, timeout=10)
 
             if ci_resp.status_code == 200:
