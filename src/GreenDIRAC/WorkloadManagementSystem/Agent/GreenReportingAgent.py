@@ -431,6 +431,109 @@ class GreenReportingAgent(AgentModule):
             return 0.0
 
     # -----------------------------------------------------
+    # def __storeJobGreenMetrics(self, record):
+    #
+    #     jobID = record.get("ExecUnitID")
+    #     if jobID is None:
+    #         self.log.error("Cannot store metrics: missing JobID")
+    #         return
+    #
+    #     try:
+    #         jobID = int(jobID)
+    #     except Exception:
+    #         self.log.error(f"Cannot convert JobID={jobID} to int")
+    #         return
+    #
+    #
+    #     #TODO need to add site
+    #     params_dict = {
+    #         "Energy_wh": record.get("Energy_wh"),
+    #         "CI_g": record.get("CI_g"),
+    #         "CFP_g": record.get("CFP_g"),
+    #         "PUE": record.get("PUE"),
+    #         "ExecUnitFinished": record.get("ExecUnitFinished"),
+    #         "Work": record.get("Work"),
+    #         "CEE": record.get("CEE"),
+    #         "TDP_w": record.get("TDP_w"),
+    #         ## TODO maybe those shall not stored....
+    #         "TotalCPUTime_s": record.get("TotalCPUTime_s"),
+    #         "WallClockTime_s": record.get("WallClockTime_s"),
+    #         "NCores": record.get("NCores"),
+    #     }
+    #
+    #     # -------------------------------
+    #     # 1) Store in JobDB (MySQL)
+    #     # -------------------------------
+    #     # Filter out None values and convert to strings
+    #     jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
+    #
+    #     if jobdb_params:
+    #         result = self.jobDB.setJobParameters(jobID, jobdb_params)
+    #         if not result["OK"]:
+    #             self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
+    #         else:
+    #             self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
+    #     else:
+    #         self.log.warn(f"No green metrics to store for JobID={jobID}")
+    #
+    #         # -------------------------------
+    #         # 2) Store in ElasticSearch (if available)
+    #         # -------------------------------
+    #     if self.elasticJobParametersDB:
+    #         float_keys = {
+    #             "Energy_wh",
+    #             "CI_g",
+    #             "CFP_g",
+    #             "PUE",
+    #             "TDP_w",
+    #             "CEE",
+    #             "Work",
+    #             "TotalCPUTime_s",
+    #             "WallClockTime_s",
+    #             "NormCPUTime_s",
+    #             "Efficiency",
+    #             "ScaledCPUTime_s",
+    #         }
+    #         int_keys = {
+    #             "NCores",
+    #             "ExecUnitFinished",
+    #         }
+    #
+    #         es_params = {}
+    #         for k, v in params_dict.items():
+    #             if v is None:
+    #                 continue
+    #
+    #             # Explicit typing for ES
+    #             if k in float_keys:
+    #                 try:
+    #                     es_params[k] = float(v)
+    #                 except Exception:
+    #                     continue
+    #             elif k in int_keys:
+    #                 try:
+    #                     es_params[k] = int(v)
+    #                 except Exception:
+    #                     continue
+    #             else:
+    #                 # Non-numeric fields, keep as-is
+    #                 es_params[k] = v
+    #
+    #         if es_params:
+    #             es_res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
+    #             if not es_res["OK"]:
+    #                 self.log.error(
+    #                     f"❌ ElasticSearch write failed for {jobID}: {es_res['Message']}"
+    #                 )
+    #             else:
+    #                 self.log.info(
+    #                     f"📡 Stored green metrics in ElasticSearch for JobID={jobID}"
+    #                 )
+
+
+
+
+
     def __storeJobGreenMetrics(self, record):
 
         jobID = record.get("ExecUnitID")
@@ -444,8 +547,10 @@ class GreenReportingAgent(AgentModule):
             self.log.error(f"Cannot convert JobID={jobID} to int")
             return
 
-
-        #TODO need to add site
+        # -------------------------------------------------
+        # 1) Store green metrics in JobDB (UNCHANGED)
+        ## or store the whole record why bother
+        # -------------------------------------------------
         params_dict = {
             "Energy_wh": record.get("Energy_wh"),
             "CI_g": record.get("CI_g"),
@@ -455,16 +560,11 @@ class GreenReportingAgent(AgentModule):
             "Work": record.get("Work"),
             "CEE": record.get("CEE"),
             "TDP_w": record.get("TDP_w"),
-            ## TODO maybe those shall not stored....
             "TotalCPUTime_s": record.get("TotalCPUTime_s"),
             "WallClockTime_s": record.get("WallClockTime_s"),
             "NCores": record.get("NCores"),
         }
 
-        # -------------------------------
-        # 1) Store in JobDB (MySQL)
-        # -------------------------------
-        # Filter out None values and convert to strings
         jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
 
         if jobdb_params:
@@ -473,20 +573,32 @@ class GreenReportingAgent(AgentModule):
                 self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
             else:
                 self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
-        else:
-            self.log.warn(f"No green metrics to store for JobID={jobID}")
 
-        # -------------------------------
-        # 2) Store in ElasticSearch (if available)
-        # -------------------------------
+        # -------------------------------------------------
+        # 2) Store FULL JOB RECORD in ElasticSearch
+        # -------------------------------------------------
         if self.elasticJobParametersDB:
-            es_params = {k: str(v) for k, v in params_dict.items() if v is not None}
+
+            es_params = {}
+            for k, v in record.items():
+                if v is None:
+                    continue
+
+                if k in TIME_STAMPS:
+                    es_params[k] = str(v)
+                else:
+                    es_params[k] = v
+
             if es_params:
                 es_res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
                 if not es_res["OK"]:
-                    self.log.error(f"❌ ElasticSearch write failed for {jobID}: {es_res['Message']}")
+                    self.log.error(
+                        f"❌ ElasticSearch write failed for {jobID}: {es_res['Message']}"
+                    )
                 else:
-                    self.log.info(f"📡 Stored green metrics in ElasticSearch for JobID={jobID}")
+                    self.log.info(
+                        f"📡 Stored FULL job record in ElasticSearch for JobID={jobID}"
+                    )
 
     # -----------------------------------------------------
     def compute_cpu_energy_efficiency(self, cpunormfactor, ncores, tdp):
