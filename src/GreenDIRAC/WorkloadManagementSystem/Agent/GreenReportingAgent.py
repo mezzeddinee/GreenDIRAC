@@ -551,28 +551,28 @@ class GreenReportingAgent(AgentModule):
         # 1) Store green metrics in JobDB (UNCHANGED)
         ## or store the whole record why bother
         # -------------------------------------------------
-        params_dict = {
-            "Energy_wh": record.get("Energy_wh"),
-            "CI_g": record.get("CI_g"),
-            "CFP_g": record.get("CFP_g"),
-            "PUE": record.get("PUE"),
-            "ExecUnitFinished": record.get("ExecUnitFinished"),
-            "Work": record.get("Work"),
-            "CEE": record.get("CEE"),
-            "TDP_w": record.get("TDP_w"),
-            "TotalCPUTime_s": record.get("TotalCPUTime_s"),
-            "WallClockTime_s": record.get("WallClockTime_s"),
-            "NCores": record.get("NCores"),
-        }
-
-        jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
-
-        if jobdb_params:
-            result = self.jobDB.setJobParameters(jobID, jobdb_params)
-            if not result["OK"]:
-                self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
-            else:
-                self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
+        # params_dict = {
+        #     "Energy_wh": record.get("Energy_wh"),
+        #     "CI_g": record.get("CI_g"),
+        #     "CFP_g": record.get("CFP_g"),
+        #     "PUE": record.get("PUE"),
+        #     "ExecUnitFinished": record.get("ExecUnitFinished"),
+        #     "Work": record.get("Work"),
+        #     "CEE": record.get("CEE"),
+        #     "TDP_w": record.get("TDP_w"),
+        #     "TotalCPUTime_s": record.get("TotalCPUTime_s"),
+        #     "WallClockTime_s": record.get("WallClockTime_s"),
+        #     "NCores": record.get("NCores"),
+        # }
+        #
+        # jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
+        #
+        # if jobdb_params:
+        #     result = self.jobDB.setJobParameters(jobID, jobdb_params)
+        #     if not result["OK"]:
+        #         self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
+        #     else:
+        #         self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
 
         # -------------------------------------------------
         # 2) Store FULL JOB RECORD in ElasticSearch
