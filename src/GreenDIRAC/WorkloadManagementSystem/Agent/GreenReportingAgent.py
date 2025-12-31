@@ -19,7 +19,6 @@ from DIRAC.ConfigurationSystem.Client.Helpers import Registry
 from DIRAC.ConfigurationSystem.Client import PathFinder
 from DIRAC.ConfigurationSystem.Client.Utilities import getDIRACGOCDictionary
 
-
 # --------------------------------------------------------
 # DIRAC job parameters and attributes
 # --------------------------------------------------------
@@ -37,7 +36,6 @@ JOB_ATTRIBUTE_KEYS = [
 ]
 
 TIME_STAMPS = ["SubmissionTime", "StartExecTime", "EndExecTime"]
-
 
 # Defaults
 DEFAULT_CI = 24.0
@@ -181,6 +179,7 @@ class GreenReportingAgent(AgentModule):
                     record[k] = str(v) if k in TIME_STAMPS else v
 
             # Ensure JobID is present and typed
+            print(record["Site"])
             record["JobID"] = int(jobID)
             records.append(record)
 
@@ -199,9 +198,17 @@ class GreenReportingAgent(AgentModule):
 
             site = rec.get("Site", "Unknown")
             siteRes = self.__getSiteParameters(site)
+            print(" __getSiteParameters")
+
             if not siteRes["OK"]:
                 continue
             pue, ci, gocdb = siteRes["Value"]
+            print(gocdb)
+            #################################################
+            rec["SiteDIRAC"] = site
+            rec["SiteGOCDB"] = gocdb
+            rec["Site"] = gocdb
+            ###################################################
 
             cpu_s = float(rec.get("TotalCPUTime(s)", 0))
             energy_kwh = self.__compute_energy_kwh(cpu_s, tdp, cores)
@@ -218,9 +225,10 @@ class GreenReportingAgent(AgentModule):
             # =======================================================
             # INTERNAL RECORD (for JobDB)
             # =======================================================
+            print()
             rec.update({
                 "ExecUnitID": int(rec.get("JobID")),
-                "Site": gocdb,
+                # "Site": gocdb,
                 "PUE": pue,
                 "CI_g": ci,
                 "Energy_wh": energy_wh,
@@ -248,44 +256,16 @@ class GreenReportingAgent(AgentModule):
                 "CEE": cee,
             })
 
-            # =======================================================
-            # CATALIN EUR RECORD (external)
-            # =======================================================
-            catalin_record = {
-                "ExecUnitID": rec["ExecUnitID"],
-                "Site": rec["Site"],
-                "PUE": rec["PUE"],
-                "CI_g": rec["CI_g"],
-                "Energy_wh": rec["Energy_wh"],
-                "CFP_g": rec["CFP_g"],
-                "StartExecTime": rec["StartExecTime"],
-                "StopExecTime": rec["StopExecTime"],
-                "Status": rec["Status"],
-                "Owner": rec["Owner"],
-                "ExecUnitFinished": rec["ExecUnitFinished"],
-                "Work": rec["Work"],
-
-                # Grid detail fields:
-                "WallClockTime_s": rec["WallClockTime_s"],
-                "CPUNormalizationFactor": rec["CPUNormalizationFactor"],
-                "NCores": rec["NCores"],
-                "NormCPUTime_s": rec["NormCPUTime_s"],
-                "Efficiency": rec["Efficiency"],
-                "TDP_w": rec["TDP_w"],
-                "TotalCPUTime_s": rec["TotalCPUTime_s"],
-                "ScaledCPUTime_s": rec["ScaledCPUTime_s"],
-            }
-
-            self.log.info(
-                f"🌱 JobID={rec.get('ExecUnitID')} "
-                f"Energy={energy_kwh:.6f} kWh PUE={pue:.2f} CI={ci:.2f}"
-            )
+            self.log.info(f"🌱 JobID={rec.get('ExecUnitID')} "
+                          f"Energy={energy_kwh:.6f} kWh PUE={pue:.2f} CI={ci:.2f}"
+                          )
 
             # Send to CIM
-            self.__sendRecordToMB(catalin_record)
+            self.__sendRecordToMB(rec)
 
             # Store internally (JobDB + ES)
             self.__storeJobGreenMetrics(rec)
+            print("**********************************************************")
 
         return S_OK()
 
@@ -314,12 +294,15 @@ class GreenReportingAgent(AgentModule):
     # -----------------------------------------------------
     def __getSiteParameters(self, site):
         """Retrieve PUE + CI from CIM service."""
+        print(" __getSiteParameters")
+        print(site)
+        result = getDIRACGOCDictionary()
+
+        # gocdb_name = result["Value"].get(site, site) if result["OK"] else site
+        gocdb_name = result["Value"].get(site) if result["OK"] else "Unknown"
+        print(gocdb_name)
 
         try:
-            # Map DIRAC → GOCDB
-            result = getDIRACGOCDictionary()
-            gocdb_name = result["Value"].get(site, site) if result["OK"] else site
-
             headers = {
                 "Authorization": f"Bearer {self.__get_jwt_token()}",
                 "Content-Type": "application/json",
@@ -345,7 +328,7 @@ class GreenReportingAgent(AgentModule):
                 return self.__getFallbackSiteParams(site, gocdb_name, pue=pue)
 
             # ---- CI request ----
-            offset_h = 5
+            offset_h = 24
             t = (datetime.now(timezone.utc) - timedelta(hours=offset_h))
             t = t.isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -376,12 +359,14 @@ class GreenReportingAgent(AgentModule):
 
         except Exception as e:
             self.log.error(f"Site parameter error for {site}: {e}")
-            return self.__getFallbackSiteParams(site, site)
+            return self.__getFallbackSiteParams(site, gocdb_name)
 
     # -----------------------------------------------------
 
     ##TODO maybe this shall be modified
     def __getFallbackSiteParams(self, site, gocdb_name, pue=None):
+        print("__getFallbackSiteParamsi")
+        print(gocdb_name)
         grid = site.split(".")[0]
         pue = pue or gConfig.getValue(
             f"/Resources/Sites/{grid}/{site}/GreenParams/PUE", DEFAULT_PUE
@@ -403,15 +388,15 @@ class GreenReportingAgent(AgentModule):
     def __sendRecordToMB(self, record):
         """Send Catalin-compliant EUR to CIM API."""
 
+        self.log.info(f"record: {record}")
+
         headers = {
             "Authorization": f"Bearer {self.__get_jwt_token()}",
             "Content-Type": "application/json",
         }
-
         resp = requests.post(
             self.metrics_db_url, headers=headers, json=record, timeout=15
         )
-
         self.log.info(f"Sent record to CIM API → {resp.status_code}")
         return S_OK()
 
@@ -430,110 +415,6 @@ class GreenReportingAgent(AgentModule):
         except Exception:
             return 0.0
 
-    # -----------------------------------------------------
-    # def __storeJobGreenMetrics(self, record):
-    #
-    #     jobID = record.get("ExecUnitID")
-    #     if jobID is None:
-    #         self.log.error("Cannot store metrics: missing JobID")
-    #         return
-    #
-    #     try:
-    #         jobID = int(jobID)
-    #     except Exception:
-    #         self.log.error(f"Cannot convert JobID={jobID} to int")
-    #         return
-    #
-    #
-    #     #TODO need to add site
-    #     params_dict = {
-    #         "Energy_wh": record.get("Energy_wh"),
-    #         "CI_g": record.get("CI_g"),
-    #         "CFP_g": record.get("CFP_g"),
-    #         "PUE": record.get("PUE"),
-    #         "ExecUnitFinished": record.get("ExecUnitFinished"),
-    #         "Work": record.get("Work"),
-    #         "CEE": record.get("CEE"),
-    #         "TDP_w": record.get("TDP_w"),
-    #         ## TODO maybe those shall not stored....
-    #         "TotalCPUTime_s": record.get("TotalCPUTime_s"),
-    #         "WallClockTime_s": record.get("WallClockTime_s"),
-    #         "NCores": record.get("NCores"),
-    #     }
-    #
-    #     # -------------------------------
-    #     # 1) Store in JobDB (MySQL)
-    #     # -------------------------------
-    #     # Filter out None values and convert to strings
-    #     jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
-    #
-    #     if jobdb_params:
-    #         result = self.jobDB.setJobParameters(jobID, jobdb_params)
-    #         if not result["OK"]:
-    #             self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
-    #         else:
-    #             self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
-    #     else:
-    #         self.log.warn(f"No green metrics to store for JobID={jobID}")
-    #
-    #         # -------------------------------
-    #         # 2) Store in ElasticSearch (if available)
-    #         # -------------------------------
-    #     if self.elasticJobParametersDB:
-    #         float_keys = {
-    #             "Energy_wh",
-    #             "CI_g",
-    #             "CFP_g",
-    #             "PUE",
-    #             "TDP_w",
-    #             "CEE",
-    #             "Work",
-    #             "TotalCPUTime_s",
-    #             "WallClockTime_s",
-    #             "NormCPUTime_s",
-    #             "Efficiency",
-    #             "ScaledCPUTime_s",
-    #         }
-    #         int_keys = {
-    #             "NCores",
-    #             "ExecUnitFinished",
-    #         }
-    #
-    #         es_params = {}
-    #         for k, v in params_dict.items():
-    #             if v is None:
-    #                 continue
-    #
-    #             # Explicit typing for ES
-    #             if k in float_keys:
-    #                 try:
-    #                     es_params[k] = float(v)
-    #                 except Exception:
-    #                     continue
-    #             elif k in int_keys:
-    #                 try:
-    #                     es_params[k] = int(v)
-    #                 except Exception:
-    #                     continue
-    #             else:
-    #                 # Non-numeric fields, keep as-is
-    #                 es_params[k] = v
-    #
-    #         if es_params:
-    #             es_res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
-    #             if not es_res["OK"]:
-    #                 self.log.error(
-    #                     f"❌ ElasticSearch write failed for {jobID}: {es_res['Message']}"
-    #                 )
-    #             else:
-    #                 self.log.info(
-    #                     f"📡 Stored green metrics in ElasticSearch for JobID={jobID}"
-    #                 )
-
-
-
-
-
     def __storeJobGreenMetrics(self, record):
 
         jobID = record.get("ExecUnitID")
@@ -546,33 +427,6 @@ class GreenReportingAgent(AgentModule):
         except Exception:
             self.log.error(f"Cannot convert JobID={jobID} to int")
             return
-
-        # -------------------------------------------------
-        # 1) Store green metrics in JobDB (UNCHANGED)
-        ## or store the whole record why bother
-        # -------------------------------------------------
-        # params_dict = {
-        #     "Energy_wh": record.get("Energy_wh"),
-        #     "CI_g": record.get("CI_g"),
-        #     "CFP_g": record.get("CFP_g"),
-        #     "PUE": record.get("PUE"),
-        #     "ExecUnitFinished": record.get("ExecUnitFinished"),
-        #     "Work": record.get("Work"),
-        #     "CEE": record.get("CEE"),
-        #     "TDP_w": record.get("TDP_w"),
-        #     "TotalCPUTime_s": record.get("TotalCPUTime_s"),
-        #     "WallClockTime_s": record.get("WallClockTime_s"),
-        #     "NCores": record.get("NCores"),
-        # }
-        #
-        # jobdb_params = [(k, str(v)) for k, v in params_dict.items() if v is not None]
-        #
-        # if jobdb_params:
-        #     result = self.jobDB.setJobParameters(jobID, jobdb_params)
-        #     if not result["OK"]:
-        #         self.log.error(f"❌ JobDB write failed for {jobID}: {result['Message']}")
-        #     else:
-        #         self.log.info(f"💾 Stored green metrics in JobDB for JobID={jobID}")
 
         # -------------------------------------------------
         # 2) Store FULL JOB RECORD in ElasticSearch
@@ -588,6 +442,7 @@ class GreenReportingAgent(AgentModule):
                     es_params[k] = str(v)
                 else:
                     es_params[k] = v
+            print(es_params)
 
             if es_params:
                 es_res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
