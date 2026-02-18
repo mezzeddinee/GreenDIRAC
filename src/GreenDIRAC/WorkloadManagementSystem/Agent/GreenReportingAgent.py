@@ -18,7 +18,6 @@ from DIRAC.ConfigurationSystem.Client import PathFinder
 
 from GreenDIRAC.WorkloadManagementSystem.Client.CIMClient import CIMClient
 
-
 # --------------------------------------------------------
 # DIRAC job parameters and attributes
 # --------------------------------------------------------
@@ -40,6 +39,8 @@ TIME_STAMPS = ["SubmissionTime", "StartExecTime", "EndExecTime"]
 
 DEFAULT_TDP = 150
 
+IDLE_CONSUMPTION_FACTOR = 0.4
+
 
 # ==========================================================
 #               GreenReportingAgent
@@ -51,7 +52,7 @@ class GreenReportingAgent(AgentModule):
 
         self.jobDB = None
         self.elasticJobParametersDB = None
-        self.maxJobsAtOnce = 50
+        self.maxJobsAtOnce = 500
 
         self.section = PathFinder.getAgentSection(self.agentName)
 
@@ -85,7 +86,7 @@ class GreenReportingAgent(AgentModule):
         )
 
         # Instantiate CIM client
-        self.cimClient = CIMClient()
+        self.cimClient = CIMClient(logger=self.log)
 
         # Load CPU models
         self.cpuDict = {}
@@ -180,12 +181,39 @@ class GreenReportingAgent(AgentModule):
             rec["Site"] = gocdb
 
             cpu_s = float(rec.get("TotalCPUTime(s)", 0))
-            energy_kwh = self.__compute_energy_kwh(cpu_s, tdp, cores)
+            wallclock_s = float(rec.get("WallClockTime(s)", 0))
+
+            # Default assumption: one core per process
+            cores_used = 1
+
+            energy_kwh = self.__compute_energy_kwh(
+                cpu_seconds=cpu_s,
+                wallclock_seconds=wallclock_s,
+                tdp=tdp,
+                total_cores=cores,
+                cores_used=cores_used,
+            )
             energy_wh = energy_kwh * 1000.0
             emissions = energy_kwh * pue * ci
 
             cpunorm = float(rec.get("CPUNormalizationFactor", 0))
             cee = (cpunorm * cores) / float(tdp) if tdp else 0.0
+
+            # -------------------------------------------------
+            # HTC metrics (added – minimal checks only)
+            # -------------------------------------------------
+            wallclock_s = float(rec.get("WallClockTime(s)", 0))
+            norm_cpu_s = float(rec.get("NormCPUTime(s)", 0))
+
+            if wallclock_s > 0:
+                rec["Efficiency"] = norm_cpu_s / wallclock_s
+            else:
+                rec["Efficiency"] = 0.0
+
+            if energy_wh > 0:
+                rec["Work"] = norm_cpu_s / energy_wh
+            else:
+                rec["Work"] = 0.0
 
             rec.update({
                 "ExecUnitID": rec["JobID"],
@@ -239,9 +267,31 @@ class GreenReportingAgent(AgentModule):
         self.log.warn(f"Unknown CPU model: {model}")
         return DEFAULT_TDP, 12
 
-    def __compute_energy_kwh(self, cpu_seconds, tdp, cores):
+    def __compute_energy_kwh(self, cpu_seconds, wallclock_seconds, tdp, total_cores, cores_used=1):
+        """
+        Energy model (professor's formula):
+
+        E = ((1-f)*CPUtime + f*WallClockTime)
+            * (CoresUsed / TotalCores)
+            * TDP
+
+        Returned value is in kWh.
+        """
         try:
-            return float(cpu_seconds) * tdp / cores / 3600.0 / 1000.0
+            if wallclock_seconds <= 0 or total_cores <= 0:
+                return 0.0
+
+            f = IDLE_CONSUMPTION_FACTOR
+            f = max(0.0, min(1.0, f))
+
+            effective_time_s = (1.0 - f) * float(cpu_seconds) + f * float(wallclock_seconds)
+            core_fraction = float(cores_used) / float(total_cores)
+
+            energy_joule = effective_time_s * core_fraction * float(tdp)
+            energy_kwh = energy_joule / 3_600_000.0
+
+            return energy_kwh
+
         except Exception:
             return 0.0
 
