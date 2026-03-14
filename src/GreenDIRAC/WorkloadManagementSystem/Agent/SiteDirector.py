@@ -60,6 +60,25 @@ class SiteDirector(BaseSiteDirector):
         """
         Sort queues by GreenScore (descending) and log top 5.
         """
+        # queueDict layout (input from BaseSiteDirector), example with 2 queues:
+        # {
+        #   "PARIS_CE01/queueA": {
+        #     "Site": "EGI.IN2P3.fr",
+        #     "CEName": "ce01.in2p3.fr",
+        #     "ParametersDict": {
+        #       "MaxCPUTime": 86400,
+        #       "QueueStatus": "Production"
+        #     }
+        #   },
+        #   "SARA_CE02/queueB": {
+        #     "Site": "EGI.SARA.nl",
+        #     "CEName": "ce02.surfsara.nl",
+        #     "ParametersDict": {
+        #       "MaxCPUTime": 43200,
+        #       "QueueStatus": "Production"
+        #     }
+        #   }
+        # }
 
         self.log.always(
             f"GreenSiteDirector: sorting {len(self.queueDict)} queues by GreenScore"
@@ -110,6 +129,11 @@ class SiteDirector(BaseSiteDirector):
         if not self.queueDict:
             return {}
 
+        # avgCEE layout (from _getAverageCEEFromES cache):
+        # {
+        #   "<GridCE>": <float_avg_cee>,
+        #   "...": <float_avg_cee>
+        # }
         avgCEE = self._getAverageCEEFromES()
         greenMetrics = {}
 
@@ -139,6 +163,16 @@ class SiteDirector(BaseSiteDirector):
                 "GreenScore": greenScore,
             }
 
+        # greenMetrics layout (output):
+        # {
+        #   "<QueueName>": {
+        #     "PUE": <float>,
+        #     "CI": <float>,
+        #     "CEE": <float>,
+        #     "GreenScore": <float>
+        #   },
+        #   "...": { ... }
+        # }
         return greenMetrics
     # =================================================================
     # ELASTICSEARCH: AVERAGE CEE
@@ -193,6 +227,25 @@ class SiteDirector(BaseSiteDirector):
                 }
             },
         }
+        # Elasticsearch aggregation query layout:
+        # {
+        #   "size": 0,
+        #   "query": {
+        #     "bool": {
+        #       "filter": [
+        #         {"range": {"timestamp": {"gte": "now-30d"}}},
+        #         {"exists": {"field": "CEE"}},
+        #         {"exists": {"field": "GridCE"}}
+        #       ]
+        #     }
+        #   },
+        #   "aggs": {
+        #     "by_gridce": {
+        #       "terms": {"field": "GridCE", "size": 10000},
+        #       "aggs": {"avg_cee": {"avg": {"field": "CEE"}}}
+        #     }
+        #   }
+        # }
 
         try:
             res = es.search(index=ES_INDEX_PATTERN, body=query)
@@ -205,6 +258,19 @@ class SiteDirector(BaseSiteDirector):
             .get("by_gridce", {})
             .get("buckets", [])
         )
+        # ES response subset layout used here:
+        # {
+        #   "aggregations": {
+        #     "by_gridce": {
+        #       "buckets": [
+        #         {
+        #           "key": "<GridCE>",
+        #           "avg_cee": {"value": <float_or_null>}
+        #         }
+        #       ]
+        #     }
+        #   }
+        # }
 
         avgCEE = {}
         for b in buckets:
@@ -217,6 +283,11 @@ class SiteDirector(BaseSiteDirector):
         # ---- UPDATE CACHE ----
         self._ceeCache = avgCEE
         self._ceeCacheTimestamp = now
+        # _ceeCache layout:
+        # {
+        #   "<GridCE>": <float_avg_cee>,
+        #   "...": <float_avg_cee>
+        # }
 
         self.log.info(
             f"GreenSiteDirector: cached CEE for {len(avgCEE)} GridCEs"
