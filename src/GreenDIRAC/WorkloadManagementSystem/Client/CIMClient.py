@@ -324,9 +324,8 @@ class CIMClient:
         # ---- CI (1h window) ----
         now = datetime.now(timezone.utc)
         end = now.isoformat(timespec="seconds").replace("+00:00", "Z")
-        start = (now - timedelta(hours=1)).isoformat(
-            timespec="seconds"
-        ).replace("+00:00", "Z")
+        start = ((now - timedelta(hours=1)).isoformat(timespec="seconds")
+                 .replace("+00:00", "Z"))
 
         payload = {
             "lat": lat,
