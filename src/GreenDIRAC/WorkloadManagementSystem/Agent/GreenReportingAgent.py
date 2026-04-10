@@ -174,7 +174,18 @@ class GreenReportingAgent(AgentModule):
             site = rec.get("Site", "Unknown")
 
             # ---- READ from CIM ----
-            pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(site)
+            try:
+                pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(
+                    site,
+                    startExecTime=rec.get("StartExecTime"),
+                    endExecTime=rec.get("EndExecTime"),
+                )
+            except TypeError as e:
+                if "unexpected keyword argument 'endExecTime'" not in str(e):
+                    raise
+                pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(
+                    site, startExecTime=rec.get("StartExecTime")
+                )
 
             rec["SiteDIRAC"] = site
             rec["SiteGOCDB"] = gocdb

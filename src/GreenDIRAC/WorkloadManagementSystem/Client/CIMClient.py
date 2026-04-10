@@ -12,7 +12,7 @@ import os
 import time
 import configparser
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from DIRAC.ConfigurationSystem.Client.Utilities import getDIRACGOCDictionary
 
@@ -45,7 +45,7 @@ class CIMClient:
         self._token = None
         self._token_ts = None
 
-        # site cache: site -> (timestamp, pue, ci, gocdb)
+        # site cache: (site, start_key) -> (timestamp, pue, ci, gocdb)
         self._site_cache = {}
 
     # ======================================================
@@ -190,15 +190,58 @@ class CIMClient:
     # ======================================================
     # PUBLIC: SITE GREEN METRICS
     # ======================================================
-    def getSiteGreenMetrics(self, site, ceName=None):
+    def _as_iso8601_utc(self, value):
+        if not value:
+            return None
+
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+                    try:
+                        dt = datetime.strptime(text, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    if self.log:
+                        self.log.warn(
+                            f"[CIMClient] Unparseable StartExecTime={text}; "
+                            "falling back to now-1h"
+                        )
+                    return None
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    def _start_hour_bucket(self, startExecTime):
+        start_iso = self._as_iso8601_utc(startExecTime)
+        if not start_iso:
+            return "__default__"
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        dt = dt.replace(minute=0, second=0, microsecond=0)
+        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    def getSiteGreenMetrics(self, site, ceName=None, startExecTime=None, endExecTime=None):
         """
         Returns:
             (PUE, CI, GOCDB_SITE)
         """
 
         now = time.time()
-        if site in self._site_cache:
-            ts, pue, ci, gocdb = self._site_cache[site]
+        start_key = self._start_hour_bucket(startExecTime)
+        cache_key = (site, start_key)
+        if cache_key in self._site_cache:
+            ts, pue, ci, gocdb = self._site_cache[cache_key]
             if now - ts < self.cache_ttl:
                 return pue, ci, gocdb
 
@@ -206,7 +249,9 @@ class CIMClient:
 
         cacheable = True
         try:
-            pue, ci, cacheable = self._queryPUEandCI(gocdb)
+            pue, ci, cacheable = self._queryPUEandCI(
+                gocdb, startExecTime=startExecTime, endExecTime=endExecTime
+            )
         except Exception as e:
             if self.log:
                 self.log.error(
@@ -216,7 +261,7 @@ class CIMClient:
             cacheable = False
 
         if cacheable:
-            self._site_cache[site] = (now, pue, ci, gocdb)
+            self._site_cache[cache_key] = (now, pue, ci, gocdb)
         elif self.log:
             self.log.warn(
                 f"[CIMClient::getSiteGreenMetrics] Not caching fallback/degraded "
@@ -236,7 +281,7 @@ class CIMClient:
     # ======================================================
     # KPI API: PUE + CI
     # ======================================================
-    def _queryPUEandCI(self, gocdb):
+    def _queryPUEandCI(self, gocdb, startExecTime=None, endExecTime=None):
         def _safe_preview(value, limit=2000):
             text = str(value)
             if len(text) > limit:
@@ -323,9 +368,10 @@ class CIMClient:
 
         # ---- CI (1h window) ----
         now = datetime.now(timezone.utc)
-        end = now.isoformat(timespec="seconds").replace("+00:00", "Z")
-        start = ((now - timedelta(hours=1)).isoformat(timespec="seconds")
-                 .replace("+00:00", "Z"))
+        end = self._as_iso8601_utc(endExecTime)
+        if not end:
+            end = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        start = self._as_iso8601_utc(startExecTime)
 
         payload = {
             "lat": lat,
@@ -335,7 +381,6 @@ class CIMClient:
             "start": start,
             "end": end,
             "metric_id": gocdb,
-            "wattnet_params": {"granularity": "hour"},
         }
         ci_url = f"{self.kpi_api_base}/ci"
         if self.log:
