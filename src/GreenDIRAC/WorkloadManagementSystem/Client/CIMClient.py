@@ -12,7 +12,7 @@ import os
 import time
 import configparser
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from DIRAC.ConfigurationSystem.Client.Utilities import getDIRACGOCDictionary
 
@@ -231,7 +231,7 @@ class CIMClient:
         dt = dt.replace(minute=0, second=0, microsecond=0)
         return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
 
-    def getSiteGreenMetrics(self, site, ceName=None, startExecTime=None, endExecTime=None):
+    def getSiteGreenMetrics(self, site, startExecTime=None, endExecTime=None):
         """
         Returns:
             (PUE, CI, GOCDB_SITE)
@@ -372,6 +372,8 @@ class CIMClient:
         if not end:
             end = now.isoformat(timespec="seconds").replace("+00:00", "Z")
         start = self._as_iso8601_utc(startExecTime)
+        if not start:
+            start = (now - timedelta(hours=2)).isoformat(timespec="seconds").replace("+00:00", "Z")
 
         payload = {
             "lat": lat,

@@ -318,6 +318,7 @@ class GreenReportingAgent(AgentModule):
         }
 
         res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
+        ###self.elasticJobParametersDB.query
         if not res["OK"]:
             self.log.error(
                 f"ElasticSearch write failed for JobID={jobID}: "

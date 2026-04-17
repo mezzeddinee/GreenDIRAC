@@ -12,12 +12,12 @@ GreenSiteDirector — READ-ONLY green-aware SiteDirector
 from __future__ import annotations
 
 from DIRAC import S_OK
+from DIRAC.Core.Utilities.ObjectLoader import ObjectLoader
 from DIRAC.WorkloadManagementSystem.Agent.SiteDirector import (
     SiteDirector as BaseSiteDirector,
 )
 
 from GreenDIRAC.WorkloadManagementSystem.Client.CIMClient import CIMClient
-from elasticsearch import Elasticsearch
 
 import time
 
@@ -29,14 +29,7 @@ CEE_CACHE_TTL = 180  # seconds (10 minutes)
 # =====================================================================
 DEFAULT_CEE = 1.0
 
-ES_HOST = "https://elias-beta.cc.in2p3.fr:9200"
-ES_INDEX_PATTERN = "egi-fg-dirac-_elasticjobparameters_index_*"
 ES_TIME_WINDOW = "now-30d"
-
-CERT_DIR = "/vo/dirac/etc/grid-security/ES"
-ES_CA_CERT = f"{CERT_DIR}/ca.crt"
-ES_CLIENT_CERT = f"{CERT_DIR}/egirobot.crt"
-ES_CLIENT_KEY = f"{CERT_DIR}/egirobot.key"
 
 
 # =====================================================================
@@ -47,11 +40,32 @@ class SiteDirector(BaseSiteDirector):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.log.always("GreenSiteDirector loaded (GreenScore-based queue ordering)")
-        self.cimClient = CIMClient()
+        self.cimClient = CIMClient(logger=self.log)
 
         # ---- CEE CACHE ----
         self._ceeCache = {}
         self._ceeCacheTimestamp = 0
+        self.elasticJobParametersDB = None
+
+    def _getElasticJobParametersDB(self):
+        if self.elasticJobParametersDB:
+            return self.elasticJobParametersDB
+
+        res = ObjectLoader().loadObject(
+            "WorkloadManagementSystem.DB.ElasticJobParametersDB",
+            "ElasticJobParametersDB",
+        )
+        if not res["OK"]:
+            self.log.error(f"Cannot load ElasticJobParametersDB: {res['Message']}")
+            return None
+
+        try:
+            self.elasticJobParametersDB = res["Value"](parentLogger=self.log)
+        except Exception as exc:
+            self.log.error(f"Cannot initialize ElasticJobParametersDB: {exc}")
+            return None
+
+        return self.elasticJobParametersDB
 
     # =================================================================
     # QUEUE SORTING OVERRIDE (WITH LOGS)
@@ -137,15 +151,20 @@ class SiteDirector(BaseSiteDirector):
         avgCEE = self._getAverageCEEFromES()
         greenMetrics = {}
 
+        # Resolve PUE/CI once per unique site to avoid repeated calls for queues sharing a site.
+        siteMetrics = {}
+        uniqueSites = {qDict.get("Site", "") for qDict in self.queueDict.values()}
+        for site in uniqueSites:
+            try:
+                pue, ci, _gocdb = self.cimClient.getSiteGreenMetrics(site)
+            except Exception:
+                pue, ci = 3.0, 1000.0
+            siteMetrics[site] = (pue, ci)
+
         for qName, qDict in self.queueDict.items():
             site = qDict.get("Site", "")
             ce = qDict.get("CEName", "")
-
-            # PUE / CI
-            try:
-                pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(site)
-            except Exception:
-                pue, ci = 3.0, 1000.0
+            pue, ci = siteMetrics.get(site, (3.0, 1000.0))
 
             # CEE
             cee = avgCEE.get(ce, DEFAULT_CEE)
@@ -174,6 +193,7 @@ class SiteDirector(BaseSiteDirector):
         #   "...": { ... }
         # }
         return greenMetrics
+
     # =================================================================
     # ELASTICSEARCH: AVERAGE CEE
     # =================================================================
@@ -193,21 +213,16 @@ class SiteDirector(BaseSiteDirector):
 
         self.log.info("GreenSiteDirector: refreshing CEE cache from Elasticsearch")
 
-        # ---- ES CLIENT ----
-        try:
-            es = Elasticsearch(
-                [ES_HOST],
-                scheme="https",
-                port=9200,
-                verify_certs=True,
-                ca_certs=ES_CA_CERT,
-                client_cert=ES_CLIENT_CERT,
-                client_key=ES_CLIENT_KEY,
-                ssl_show_warn=False,
-            )
-        except Exception as e:
-            self.log.error(f"GreenSiteDirector: failed to create ES client: {e}")
-            return self._ceeCache  # fallback to last known values
+        db = self._getElasticJobParametersDB()
+        if not db:
+            return self._ceeCache
+
+        indexPattern = f"{db.indexName_base}_*"
+        self.log.info(
+            "GreenSiteDirector: querying ES via ElasticJobParametersDB "
+            f"(host={getattr(db, '_dbHost', 'n/a')}, port={getattr(db, '_dbPort', 'n/a')}, "
+            f"indexPattern={indexPattern}, window={ES_TIME_WINDOW})"
+        )
 
         query = {
             "size": 0,
@@ -247,16 +262,25 @@ class SiteDirector(BaseSiteDirector):
         #   }
         # }
 
-        try:
-            res = es.search(index=ES_INDEX_PATTERN, body=query)
-        except Exception as e:
-            self.log.error(f"GreenSiteDirector: ES aggregation failed: {e}")
-            return self._ceeCache  # fallback
+        res = db.query(index=indexPattern, query=query)
+        if not res["OK"]:
+            self.log.error(f"GreenSiteDirector: ES aggregation failed: {res['Message']}")
+            return self._ceeCache
 
+        totalHits = (
+            res["Value"]
+            .get("hits", {})
+            .get("total", {})
+            .get("value")
+        )
         buckets = (
-            res.get("aggregations", {})
+            res["Value"].get("aggregations", {})
             .get("by_gridce", {})
             .get("buckets", [])
+        )
+        self.log.info(
+            "GreenSiteDirector: ES aggregation response "
+            f"(hits={totalHits}, buckets={len(buckets)})"
         )
         # ES response subset layout used here:
         # {
@@ -290,7 +314,8 @@ class SiteDirector(BaseSiteDirector):
         # }
 
         self.log.info(
-            f"GreenSiteDirector: cached CEE for {len(avgCEE)} GridCEs"
+            f"GreenSiteDirector: cached CEE for {len(avgCEE)} GridCEs "
+            f"(indexPattern={indexPattern})"
         )
 
         return avgCEE
