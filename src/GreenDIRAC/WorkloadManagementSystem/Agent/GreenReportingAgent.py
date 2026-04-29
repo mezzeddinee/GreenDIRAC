@@ -6,6 +6,7 @@ and stores them in DIRAC JobDB / ElasticSearch.
 """
 
 from datetime import timezone
+import time
 
 from DIRAC import S_OK, S_ERROR, gConfig
 from DIRAC.Core.Base.AgentModule import AgentModule
@@ -35,6 +36,74 @@ JOB_ATTRIBUTE_KEYS = [
     "SystemPriority", "UserPriority",
 ]
 
+SITES_EUROPE = [
+    "Cloud.IHPC.fr",
+    "EGI.ARNES.si",
+    "EGI.AUVERGRID.fr",
+    "EGI.BARI.it",
+    "EGI.CATANIA.it",
+    "EGI.CERN.ch",
+    "EGI.CESNET.cz",
+    "EGI.CIEMAT.es",
+    "EGI.CIRMMP.it",
+    "EGI.CNAF.it",
+    "EGI.CNR.it",
+    "EGI.CPPM.fr",
+    "EGI.CREATIS.fr",
+    "EGI.CYFRONET.pl",
+    "EGI.DESY.de",
+    "EGI.DESYZN.de",
+    "EGI.FRASCATI.it",
+    "EGI.GOEGRID.de",
+    "EGI.GRIDKA.de",
+    "EGI.GRIF.fr",
+    "EGI.HEPACC.uk",
+    "EGI.IFAE.es",
+    "EGI.IFCA.es",
+    "EGI.IN2P3-CC.fr",
+    "EGI.INFN-COSENZA.it",
+    "EGI.INFN-GENOVA.it",
+    "EGI.INFN-LECCE.it",
+    "EGI.INFN-NAPOLI.it",
+    "EGI.INFN-PISA.it",
+    "EGI.INGRID.pt",
+    "EGI.IRB.hr",
+    "EGI.IRES.fr",
+    "EGI.JINR.ru",
+    "EGI.KFKI.hu",
+    "EGI.LAPP.fr",
+    "EGI.LNL.it",
+    "EGI.LPC.fr",
+    "EGI.LSGRUG.nl",
+    "EGI.METU.tr",
+    "EGI.NCBJ.pl",
+    "EGI.NIKHEF.nl",
+    "EGI.ROMA3.it",
+    "EGI.RWTH-Aachen.de",
+    "EGI.SARA.nl",
+    "EGI.SRCE.hr",
+    "EGI.SiGNET.si",
+    "EGI.TASK.pl",
+    "EGI.TORINO.it",
+    "EGI.TRIESTE.it",
+    "EGI.UCL.be",
+    "EGI.UKI.uk",
+    "EGI.UKIAC.uk",
+    "EGI.UKIB.uk",
+    "EGI.UKID.uk",
+    "EGI.UKIG.uk",
+    "EGI.UKIL.uk",
+    "EGI.UKILH.uk",
+    "EGI.UKIM.uk",
+    "EGI.UKIMBH.uk",
+    "EGI.UKIR.uk",
+    "EGI.UKIRALPP.uk",
+    "EGI.UKISHEF.uk",
+    "EGI.ULAKBIM.tr",
+    "EGI.ULB.be",
+    "EGI.UNI-SIEGEN-HEP.de",
+]
+
 TIME_STAMPS = ["SubmissionTime", "StartExecTime", "EndExecTime"]
 
 DEFAULT_TDP = 150
@@ -52,7 +121,7 @@ class GreenReportingAgent(AgentModule):
 
         self.jobDB = None
         self.elasticJobParametersDB = None
-        self.maxJobsAtOnce = 500
+        self.maxJobsAtOnce = 1000
 
         self.section = PathFinder.getAgentSection(self.agentName)
 
@@ -109,9 +178,9 @@ class GreenReportingAgent(AgentModule):
     # EXECUTE
     # =====================================================================
     def execute(self):
-
         condDict = {
             "Status": [JobStatus.DONE, JobStatus.FAILED],
+            "Site": SITES_EUROPE,
             "ApplicationNumStatus": 0,
         }
 
@@ -157,15 +226,17 @@ class GreenReportingAgent(AgentModule):
             rec["JobID"] = int(jobID)
             records.append(rec)
 
-        # Mark processed
-        self.jobDB.setJobAttributes(
-            jobIDs, ["ApplicationNumStatus"], [9999]
-        )
+        successJobs = []
 
         # -------------------------------------------------------------
         # Process jobs
         # -------------------------------------------------------------
+
+        startJobs = time.time()
+
         for rec in records:
+
+            startRecord = time.time()
 
             tdp, cores = self.__getProcessorParameters(
                 rec.get("ModelName", "Unknown")
@@ -174,18 +245,13 @@ class GreenReportingAgent(AgentModule):
             site = rec.get("Site", "Unknown")
 
             # ---- READ from CIM ----
-            try:
-                pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(
-                    site,
-                    startExecTime=rec.get("StartExecTime"),
-                    endExecTime=rec.get("EndExecTime"),
-                )
-            except TypeError as e:
-                if "unexpected keyword argument 'endExecTime'" not in str(e):
-                    raise
-                pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(
-                    site, startExecTime=rec.get("StartExecTime")
-                )
+            pue, ci, gocdb = self.cimClient.getSiteGreenMetrics(
+                site,
+                startExecTime=rec.get("StartExecTime"),
+                endExecTime=rec.get("EndExecTime"),
+            )
+
+            self.log.debug(f"Time after getSiteGreenMetrics: {time.time()-startRecord}")
 
             rec["SiteDIRAC"] = site
             rec["SiteGOCDB"] = gocdb
@@ -242,13 +308,17 @@ class GreenReportingAgent(AgentModule):
             # -------------------------------------------------
             # SUBMIT to CIM
             # -------------------------------------------------
+
+            startCIM = time.time()
+
             try:
                 ok = self.cimClient.submitRecord(rec)
                 if ok:
                     self.log.info(
                         f"CIM submission OK for JobID={rec['ExecUnitID']} "
-                        f"Site={gocdb}"
+                        f"Site={gocdb}; time spent {time.time() - startCIM}"
                     )
+                    successJobs.append(rec["JobID"])
                 else:
                     self.log.error(
                         f"CIM submission FAILED for JobID={rec['ExecUnitID']}"
@@ -266,7 +336,17 @@ class GreenReportingAgent(AgentModule):
                     f"ElasticSearch storage OK for JobID={rec['ExecUnitID']}"
                 )
 
-        return S_OK()
+        # Mark processed
+        self.log.info(f"Sending ApplicationNumStatus updates for {len(successJobs)} jobs")
+        result = self.jobDB.setJobAttributes(
+            successJobs, ["ApplicationNumStatus"], [9999]
+        )
+        if not result["OK"]:
+             self.log.error("Failed to update ApplicationNumStatus attributes")
+
+        self.log.debug(f"Processing {len(records)} jobs in {time.time()-startJobs}")
+
+        return result
 
     # =====================================================================
     # HELPERS
@@ -318,7 +398,6 @@ class GreenReportingAgent(AgentModule):
         }
 
         res = self.elasticJobParametersDB.setJobParameters(jobID, es_params)
-        ###self.elasticJobParametersDB.query
         if not res["OK"]:
             self.log.error(
                 f"ElasticSearch write failed for JobID={jobID}: "
