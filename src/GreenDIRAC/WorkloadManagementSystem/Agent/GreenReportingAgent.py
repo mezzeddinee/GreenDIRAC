@@ -110,6 +110,56 @@ DEFAULT_TDP = 150
 
 IDLE_CONSUMPTION_FACTOR = 0.4
 
+# Example CS file layout (WorkloadManagement_GreenReportingAgent.cfg):
+#
+# Systems
+# {
+#   WorkloadManagement
+#   {
+#     Production
+#     {
+#       Agents
+#       {
+#         GreenReportingAgent
+#         {
+#           Enabled = yes
+#           MaxJobsAtOnce = 1000
+#
+#           CIM_EMAIL = <email>
+#           CIM_PASSWORD = <password>
+#           CIM_API_BASE = https://<host>/gd-cim-api[/v1]
+#           CIM_METRICS_URL = https://<host>/gd-cim-api[/v1]/submit
+#           CI_API_BASE = https://<host>/gd-ci-api[/v1]
+#
+#           DEFAULT_PUE = 3
+#           DEFAULT_CI = 1000
+#           DEFAULT_ENERGY_WH = 8500
+#
+#           TOKEN_MAX_AGE_H = 24
+#           CACHE_TTL = 1800
+#           TOKEN_TIMEOUT_S = 20
+#           PUE_TIMEOUT_S = 20
+#           CI_TIMEOUT_S = 30
+#           SUBMIT_TIMEOUT_S = 30
+#           CACHE_MAX_ENTRIES = 5000
+#           STALE_MAX_AGE_S = 86400
+#           HTTP_RETRIES = 2
+#           HTTP_BACKOFF_S = 0.5
+#
+#           CPUData
+#           {
+#             <ModelName>
+#             {
+#               TDP = <watts>
+#               Cores = <int>
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
+
 
 # ==========================================================
 #               GreenReportingAgent
@@ -155,7 +205,7 @@ class GreenReportingAgent(AgentModule):
         )
 
         # Instantiate CIM client
-        self.cimClient = CIMClient(logger=self.log)
+        self.cimClient = CIMClient(logger=self.log, csSection=self.section)
 
         # Load CPU models
         self.cpuDict = {}

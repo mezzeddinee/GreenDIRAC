@@ -2,13 +2,12 @@
 Minimal CIM/KPI client for GreenDIRAC.
 """
 
-import configparser
-import os
 import time
 from datetime import datetime, timedelta, timezone
 
 import requests
 
+from DIRAC import gConfig
 from DIRAC.ConfigurationSystem.Client.Utilities import getDIRACGOCDictionary
 
 
@@ -29,61 +28,94 @@ DEFAULT_HTTP_BACKOFF_S = 0.5
 
 
 class CIMClient:
-    def __init__(self, confFile=None, logger=None):
+    def __init__(self, confFile=None, logger=None, csSection=None):
         self.log = logger
         self._token = None
         self._token_ts = None
         self._site_cache = {}  # (site, hour_bucket) -> (ts, pue, ci, gocdb)
-        self._loadConfig(confFile)
+        self._loadConfig(csSection)
 
-    def _loadConfig(self, confFile):
-        if not confFile:
-            confFile = os.path.join(os.path.dirname(__file__), "cim.conf")
-        if not os.path.exists(confFile):
-            raise RuntimeError(f"CIMClient config file not found: {confFile}")
+    def _loadConfig(self, csSection=None):
+        csSection = (csSection or "").rstrip("/")
+        if not csSection:
+            self._log("error", "CIMClient requires a valid csSection for configuration")
+            raise RuntimeError("CIMClient requires csSection")
 
-        cfg = configparser.ConfigParser()
-        cfg.read(confFile)
+        def _read_text(cs_key=None):
+            value = None
+            if csSection and cs_key:
+                value = gConfig.getValue(f"{csSection}/{cs_key}", None)
+            if value in (None, ""):
+                self._log(
+                    "error",
+                    f"Missing required CIMClient config in CS: {csSection}/{cs_key}",
+                )
+                raise RuntimeError(f"Missing required CIMClient config: {cs_key}")
+            return value
 
-        self.cim_email = cfg.get("CIM", "EMAIL")
-        self.cim_password = cfg.get("CIM", "PASSWORD")
-        self.cim_api_base = cfg.get("CIM", "API_BASE").rstrip("/")
-        self.metrics_url = cfg.get("CIM", "METRICS_URL").rstrip("/")
-        self.kpi_api_base = cfg.get("KPI", "API_BASE").rstrip("/")
+        def _read_float(cs_key=None):
+            value = None
+            if csSection and cs_key:
+                value = gConfig.getValue(f"{csSection}/{cs_key}", None)
+            if value in (None, ""):
+                self._log(
+                    "error",
+                    f"Missing required CIMClient config in CS: {csSection}/{cs_key}",
+                )
+                raise RuntimeError(f"Missing required CIMClient config: {cs_key}")
+            return float(value)
 
-        self.default_pue = cfg.getfloat("Defaults", "PUE", fallback=DEFAULT_PUE)
-        self.default_ci = cfg.getfloat("Defaults", "CI", fallback=DEFAULT_CI)
-        self.default_energy_wh = cfg.getint(
-            "Defaults", "ENERGY_WH", fallback=DEFAULT_ENERGY_WH
+        def _read_int(cs_key=None):
+            value = None
+            if csSection and cs_key:
+                value = gConfig.getValue(f"{csSection}/{cs_key}", None)
+            if value in (None, ""):
+                self._log(
+                    "error",
+                    f"Missing required CIMClient config in CS: {csSection}/{cs_key}",
+                )
+                raise RuntimeError(f"Missing required CIMClient config: {cs_key}")
+            return int(value)
+
+        self.cim_email = _read_text("CIM_EMAIL")
+        self.cim_password = _read_text("CIM_PASSWORD")
+        self.cim_api_base = _read_text("CIM_API_BASE").rstrip("/")
+        self.metrics_url = _read_text("CIM_METRICS_URL").rstrip("/")
+        self.kpi_api_base = _read_text("CI_API_BASE").rstrip("/")
+
+        self.default_pue = _read_float("DEFAULT_PUE")
+        self.default_ci = _read_float("DEFAULT_CI")
+        self.default_energy_wh = _read_int(
+            "DEFAULT_ENERGY_WH"
         )
 
-        self.token_max_age_h = cfg.getfloat(
-            "Runtime", "TOKEN_MAX_AGE_H", fallback=DEFAULT_TOKEN_MAX_AGE_H
+        self.token_max_age_h = _read_float(
+            "TOKEN_MAX_AGE_H"
         )
-        self.cache_ttl = cfg.getint("Runtime", "CACHE_TTL", fallback=DEFAULT_CACHE_TTL)
-        self.token_timeout_s = cfg.getfloat(
-            "Runtime", "TOKEN_TIMEOUT_S", fallback=DEFAULT_TOKEN_TIMEOUT_S
+        self.cache_ttl = _read_int("CACHE_TTL")
+        self.token_timeout_s = _read_float(
+            "TOKEN_TIMEOUT_S"
         )
-        self.pue_timeout_s = cfg.getfloat(
-            "Runtime", "PUE_TIMEOUT_S", fallback=DEFAULT_PUE_TIMEOUT_S
+        self.pue_timeout_s = _read_float(
+            "PUE_TIMEOUT_S"
         )
-        self.ci_timeout_s = cfg.getfloat(
-            "Runtime", "CI_TIMEOUT_S", fallback=DEFAULT_CI_TIMEOUT_S
+        self.ci_timeout_s = _read_float(
+            "CI_TIMEOUT_S"
         )
-        self.submit_timeout_s = cfg.getfloat(
-            "Runtime", "SUBMIT_TIMEOUT_S", fallback=DEFAULT_SUBMIT_TIMEOUT_S
+        self.submit_timeout_s = _read_float(
+            "SUBMIT_TIMEOUT_S"
         )
-        self.cache_max_entries = cfg.getint(
-            "Runtime", "CACHE_MAX_ENTRIES", fallback=DEFAULT_CACHE_MAX_ENTRIES
+        self.cache_max_entries = _read_int(
+            "CACHE_MAX_ENTRIES"
         )
-        self.stale_max_age_s = cfg.getint(
-            "Runtime", "STALE_MAX_AGE_S", fallback=DEFAULT_STALE_MAX_AGE_S
+        self.stale_max_age_s = _read_int(
+            "STALE_MAX_AGE_S"
         )
-        self.http_retries = cfg.getint(
-            "Runtime", "HTTP_RETRIES", fallback=DEFAULT_HTTP_RETRIES
+        self.http_retries = _read_int(
+            "HTTP_RETRIES"
         )
-        self.http_backoff_s = cfg.getfloat(
-            "Runtime", "HTTP_BACKOFF_S", fallback=DEFAULT_HTTP_BACKOFF_S
+        self.http_backoff_s = _read_float(
+            "HTTP_BACKOFF_S"
         )
 
     def _log(self, level, message):
