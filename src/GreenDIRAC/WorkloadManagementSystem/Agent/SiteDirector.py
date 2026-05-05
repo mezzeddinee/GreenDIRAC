@@ -21,7 +21,7 @@ from GreenDIRAC.WorkloadManagementSystem.Client.CIMClient import CIMClient
 
 import time
 
-CEE_CACHE_TTL = 180  # seconds (10 minutes)
+CEE_CACHE_TTL = 3600  # seconds
 
 
 # =====================================================================
@@ -46,6 +46,13 @@ class SiteDirector(BaseSiteDirector):
         self._ceeCache = {}
         self._ceeCacheTimestamp = 0
         self.elasticJobParametersDB = None
+
+    def _getPilotOptions(self, queue, **kwargs):
+        pilotOptions = super()._getPilotOptions(queue, **kwargs)
+        if self.group == "biomed_green":
+            self.log.info("Applying MaxCycles=25 for biomed_green pilots")
+            pilotOptions.append("--MaxCycles=25")
+        return pilotOptions
 
     def _getElasticJobParametersDB(self):
         if self.elasticJobParametersDB:
